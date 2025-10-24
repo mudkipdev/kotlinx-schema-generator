@@ -23,8 +23,15 @@ private data class SimpleRecord(val name: String, val age: Int)
 @Suppress("unused")
 @Serializable
 private data class StringConstraintRecord(
-    @StringConstraints(minLength = 2, maxLength = 10, pattern = "[a-z]+", format = StringConstraints.StringFormat.EMAIL)
+    @StringConstraints(minLength = 2, maxLength = 10, pattern = "[a-z]+", formats = [StringConstraints.StringFormat.EMAIL])
     val email: String
+)
+
+@Suppress("unused")
+@Serializable
+private data class MultiFormatRecord(
+    @StringConstraints(formats = [StringConstraints.StringFormat.IPV4, StringConstraints.StringFormat.IPV6])
+    val address: String
 )
 
 @Suppress("unused")
@@ -59,11 +66,69 @@ private enum class Status {
 
 @Suppress("unused")
 @Serializable
+private enum class Priority {
+    @SerialName("low")
+    @SchemaDescription("Low priority task")
+    LOW,
+
+    @SerialName("medium")
+    @SchemaDescription("Medium priority task")
+    MEDIUM,
+
+    @SerialName("high")
+    @SchemaDescription("High priority task")
+    HIGH
+}
+
+@Suppress("unused")
+@Serializable
 private data class EnumHolder(val status: Status)
 
 @Suppress("unused")
 @Serializable
+private data class EnumWithDescriptionHolder(val priority: Priority)
+
+@Suppress("unused")
+@Serializable
 private data class NullableHolder(val score: Double?, val title: String?)
+
+@Suppress("unused")
+@Serializable
+private data class AllNumberTypes(
+    val byte: Byte,
+    val ubyte: UByte,
+    val short: Short,
+    val ushort: UShort,
+    val int: Int,
+    val uint: UInt,
+    val long: Long,
+    val ulong: ULong,
+    val float: Float,
+    val double: Double
+)
+
+@Suppress("unused")
+@JvmInline
+@Serializable
+private value class Username(val value: String)
+
+@Suppress("unused")
+@JvmInline
+@Serializable
+private value class UserId(val value: Int)
+
+@Suppress("unused")
+@JvmInline
+@Serializable
+private value class Enabled(val value: Boolean)
+
+@Suppress("unused")
+@Serializable
+private data class InlineValueClassHolder(
+    val username: Username,
+    val userId: UserId,
+    val enabled: Enabled
+)
 
 @Suppress("unused")
 @Serializable
@@ -185,6 +250,69 @@ class SchemaTest {
             entry.jsonObject.requireProperties().requireObject("type")["const"]?.jsonPrimitive?.content
         }.toSet()
         assertEquals(setOf("String", "Sealed<FlattenedShape>"), constValues)
+    }
+
+    @Test
+    fun allNumberTypesProduceCorrectSchemas() {
+        val properties = schemaJson<AllNumberTypes>("all_number_types").requireProperties()
+
+        assertEquals("integer", properties.requireObject("byte").requireStringType())
+        assertEquals("integer", properties.requireObject("ubyte").requireStringType())
+        assertEquals("integer", properties.requireObject("short").requireStringType())
+        assertEquals("integer", properties.requireObject("ushort").requireStringType())
+        assertEquals("integer", properties.requireObject("int").requireStringType())
+        assertEquals("integer", properties.requireObject("uint").requireStringType())
+        assertEquals("integer", properties.requireObject("long").requireStringType())
+        assertEquals("integer", properties.requireObject("ulong").requireStringType())
+        assertEquals("number", properties.requireObject("float").requireStringType())
+        assertEquals("number", properties.requireObject("double").requireStringType())
+    }
+
+    @Test
+    fun inlineValueClassesUnwrapToUnderlyingType() {
+        val properties = schemaJson<InlineValueClassHolder>("inline_value_classes").requireProperties()
+
+        assertEquals("string", properties.requireObject("username").requireStringType())
+        assertEquals("integer", properties.requireObject("userId").requireStringType())
+        assertEquals("boolean", properties.requireObject("enabled").requireStringType())
+    }
+
+    @Test
+    fun multipleFormatsProduceAnyOf() {
+        val properties = schemaJson<MultiFormatRecord>("multi_format").requireProperties()
+        val addressSchema = properties.requireObject("address")
+
+        val anyOf = addressSchema.requireArray("anyOf")
+        assertEquals(2, anyOf.size)
+
+        val formats = anyOf.map {
+            it.jsonObject["format"]?.jsonPrimitive?.content
+        }.toSet()
+
+        assertEquals(setOf("ipv4", "ipv6"), formats)
+
+        anyOf.forEach { variant ->
+            assertEquals("string", variant.jsonObject["type"]?.jsonPrimitive?.content)
+        }
+    }
+
+    @Test
+    fun enumWithDescriptionsProducesOneOf() {
+        val properties = schemaJson<EnumWithDescriptionHolder>("enum_with_descriptions").requireProperties()
+        val prioritySchema = properties.requireObject("priority")
+
+        val oneOf = prioritySchema.requireArray("oneOf")
+        assertEquals(3, oneOf.size)
+
+        val variants = oneOf.map { variant ->
+            val constValue = variant.jsonObject["const"]?.jsonPrimitive?.content
+            val description = variant.jsonObject["description"]?.jsonPrimitive?.content
+            constValue to description
+        }.toMap()
+
+        assertEquals("Low priority task", variants["low"])
+        assertEquals("Medium priority task", variants["medium"])
+        assertEquals("High priority task", variants["high"])
     }
 
     private inline fun <reified T> schemaJson(title: String, schema: Schema = Schema()): JsonObject {

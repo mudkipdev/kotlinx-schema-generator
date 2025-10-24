@@ -64,7 +64,15 @@ class Schema(private val config: SchemaConfig = SchemaConfig()) {
             PrimitiveKind.FLOAT, PrimitiveKind.DOUBLE -> numberSchema(annotations)
             StructureKind.LIST -> arraySchema(descriptor, annotations, definitions, inProgress)
             StructureKind.MAP -> mapSchema(descriptor, annotations, definitions, inProgress)
-            StructureKind.CLASS -> classSchema(descriptor, definitions, inProgress)
+            StructureKind.CLASS -> {
+                if (descriptor.isInline) {
+                    val underlyingDescriptor = descriptor.getElementDescriptor(0)
+                    val underlyingAnnotations = descriptor.getElementAnnotations(0)
+                    generateSchema(underlyingDescriptor, annotations + underlyingAnnotations, definitions, inProgress)
+                } else {
+                    classSchema(descriptor, definitions, inProgress)
+                }
+            }
 
             StructureKind.OBJECT -> buildJsonObject {
                 put("type", "object")
@@ -82,14 +90,53 @@ class Schema(private val config: SchemaConfig = SchemaConfig()) {
         }.let { maybeNullable(descriptor, it) }
     }
 
-    private fun stringSchema(annotations: List<Annotation>): JsonObject = buildJsonObject {
-        put("type", "string")
-        annotations.filterIsInstance<SchemaDescription>().firstOrNull()?.let { put("description", it.value) }
-        annotations.filterIsInstance<StringConstraints>().firstOrNull()?.let { constraints ->
-            if (constraints.minLength >= 0) put("minLength", constraints.minLength)
-            if (constraints.maxLength >= 0) put("maxLength", constraints.maxLength)
-            if (constraints.pattern.isNotEmpty()) put("pattern", constraints.pattern)
-            constraints.format.jsonFormat?.let { put("format", it) }
+    private fun stringSchema(annotations: List<Annotation>): JsonObject {
+        val constraints = annotations.filterIsInstance<StringConstraints>().firstOrNull()
+        val description = annotations.filterIsInstance<SchemaDescription>().firstOrNull()
+
+        val validFormats = constraints?.formats?.filter { it.jsonFormat != null } ?: emptyList()
+
+        if (validFormats.size > 1) {
+            val baseConstraints = buildJsonObject {
+                put("type", "string")
+
+                description?.let {
+                    put("description", it.value)
+                }
+
+                if (constraints != null) {
+                    if (constraints.minLength >= 0) put("minLength", constraints.minLength)
+                    if (constraints.maxLength >= 0) put("maxLength", constraints.maxLength)
+                    if (constraints.pattern.isNotEmpty()) put("pattern", constraints.pattern)
+                }
+            }
+
+            val formatVariants = validFormats.map { format ->
+                buildJsonObject {
+                    for ((key, value) in baseConstraints) put(key, value)
+                    put("format", format.jsonFormat!!)
+                }
+            }
+
+            return buildJsonObject {
+                put("anyOf", JsonArray(formatVariants))
+            }
+        }
+
+        return buildJsonObject {
+            put("type", "string")
+
+            description?.let {
+                put("description", it.value)
+            }
+
+            if (constraints != null) {
+                if (constraints.minLength >= 0) put("minLength", constraints.minLength)
+                if (constraints.maxLength >= 0) put("maxLength", constraints.maxLength)
+                if (constraints.pattern.isNotEmpty()) put("pattern", constraints.pattern)
+                val singleFormat = validFormats.firstOrNull()
+                singleFormat?.jsonFormat?.let { put("format", it) }
+            }
         }
     }
 
@@ -193,10 +240,33 @@ class Schema(private val config: SchemaConfig = SchemaConfig()) {
         return list
     }
 
-    private fun enumSchema(descriptor: SerialDescriptor): JsonObject = buildJsonObject {
-        put("type", "string")
-        val values = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }
-        put("enum", JsonArray(values.map { JsonPrimitive(it) }))
+    private fun enumSchema(descriptor: SerialDescriptor): JsonObject {
+        val hasDescriptions = (0 until descriptor.elementsCount).any { index ->
+            descriptor.getElementAnnotations(index).any { it is SchemaDescription }
+        }
+
+        if (hasDescriptions) {
+            val variants = (0 until descriptor.elementsCount).map { index ->
+                val enumValue = descriptor.getElementName(index)
+                val annotations = descriptor.getElementAnnotations(index)
+                val description = annotations.filterIsInstance<SchemaDescription>().firstOrNull()
+
+                buildJsonObject {
+                    put("const", enumValue)
+                    description?.let { put("description", it.value) }
+                }
+            }
+
+            return buildJsonObject {
+                put("oneOf", JsonArray(variants))
+            }
+        }
+
+        return buildJsonObject {
+            put("type", "string")
+            val values = (0 until descriptor.elementsCount).map { descriptor.getElementName(it) }
+            put("enum", JsonArray(values.map { JsonPrimitive(it) }))
+        }
     }
 
     private fun sealedUnionSchema(

@@ -16,7 +16,7 @@ annotation class StringConstraints(
     val minLength: Int = -1,
     val maxLength: Int = -1,
     val pattern: String = "",
-    val format: StringFormat = StringFormat.NONE
+    val formats: Array<StringFormat> = []
 ) {
     enum class StringFormat(val jsonFormat: String?) {
         NONE(null),
