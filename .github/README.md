@@ -1,3 +1,7 @@
+> [!WARNING]
+> This library currently can't represent complex schemas, including `allOf`, `anyOf`, `oneOf`, `not`, etc.
+> This is not valid using Java/Kotlin's type system: `@All(@MinLength(1), @MaxLength(32))` because annotations don't support holding other annotations that extend a certain interface.
+
 # kotlinx-schema-generator
 Generate JSON Schema files from your Kotlin classes at runtime using `kotlinx.serialization`.
 
